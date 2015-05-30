@@ -13,6 +13,7 @@
         var HTMLElement_insertAdjacentHTMLPropertyDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "insertAdjacentHTML");
         var Node_get_attributes = Object.getOwnPropertyDescriptor(Node.prototype, "attributes").get;
         var Node_get_childNodes = Object.getOwnPropertyDescriptor(Node.prototype, "childNodes").get;
+        var detectionDiv = document.createElement("div");
 
         function getAttributes(element) {
             return Node_get_attributes.call(element);
@@ -44,7 +45,19 @@
             HTMLElement_insertAdjacentHTMLPropertyDescriptor.value.call(element, position, html);
         }
 
-        function cleanse(html) {
+        function inUnsafeMode() {
+            var isUnsafe = true;
+            try {
+                detectionDiv.innerHTML = "<test/>";
+            }
+            catch (ex) {
+                isUnsafe = false;
+            }
+
+            return isUnsafe;
+        }
+
+        function cleanse(html, targetElement) {
             var cleaner = document.implementation.createHTMLDocument("cleaner");
             empty(cleaner.documentElement);
             MSApp.execUnsafeLocalFunction(function () {
@@ -106,26 +119,38 @@
                 }
             }
             cleanseAttributes(cleaner.documentElement);
-            
-            var docElement = cleaner.documentElement.childNodes[1];
 
-            if (docElement == null) {
-                docElement = cleaner.documentElement;
+            var cleanedNodes = [];
+
+            if (targetElement.tagName === 'HTML') {
+                cleanedNodes = Array.prototype.slice.call(document.adoptNode(cleaner.documentElement).childNodes);
+            } else {
+                if (cleaner.head) {
+                    cleanedNodes = cleanedNodes.concat(Array.prototype.slice.call(document.adoptNode(cleaner.head).childNodes));
+                }
+                if (cleaner.body) {
+                    cleanedNodes = cleanedNodes.concat(Array.prototype.slice.call(document.adoptNode(cleaner.body).childNodes));
+                }
             }
 
-            return Array.prototype.slice.call(document.adoptNode(docElement).childNodes);
+            return cleanedNodes;
         }
 
         function cleansePropertySetter(property, setter) {
             var propertyDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, property);
+            var originalSetter = propertyDescriptor.set;
             Object.defineProperty(HTMLElement.prototype, property, {
                 get: propertyDescriptor.get,
                 set: function (value) {
-                    var that = this;
-                    var nodes = cleanse(value);
-                    MSApp.execUnsafeLocalFunction(function () {
-                        setter(propertyDescriptor, that, nodes);
-                    });
+                    if (window.WinJS && window.WinJS._execUnsafe && inUnsafeMode()) {
+                        originalSetter.call(this, value);
+                    } else {
+                        var that = this;
+                        var nodes = cleanse(value, that);
+                        MSApp.execUnsafeLocalFunction(function () {
+                            setter(propertyDescriptor, that, nodes);
+                        });
+                    }
                 },
                 enumerable: propertyDescriptor.enumerable,
                 configurable: propertyDescriptor.configurable,
@@ -147,3 +172,4 @@
     }
 
 }());
+
